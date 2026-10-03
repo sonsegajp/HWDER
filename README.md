@@ -41,7 +41,7 @@ Toolchain: Visual Studio 2022 with the **LLVM (clang-cl)** component, CMake and 
 with VS), Python 3.10+ with `cryptography` (only for the extraction helper).
 
 ```
-git clone --recursive https://github.com/drewb583/HWDE
+git clone --recursive https://github.com/sonsegajp/HWDER
 cd HWDE
 
 # 1. extract your dump once for the recompiler (exefs/ is all it needs; romfs/ is optional,
