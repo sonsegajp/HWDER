@@ -1,0 +1,35 @@
+# game data, keys, saves: never committed
+data/
+*.nsp
+*.xci
+*.keys
+save/
+save_reference/
+exefs/
+romfs/
+
+# generated code (produced from the user's own dump by tools/recomp)
+generated/
+
+# build outputs
+build/
+dist/
+*.obj
+*.pdb
+*.exe
+*.log
+build_log*.txt
+pipeline_cache.bin
+cache/
+hwder_settings.ini
+extra_entries.txt
+
+# python
+*.pyc
+__pycache__/
+
+# superseded prototype code and local captures
+legacy/
+shots/
+
+# third-party trees are git submodules (see third_party/README.md)
