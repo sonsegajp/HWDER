@@ -1,4 +1,4 @@
-# HWDE - Hyrule Warriors: Definitive Edition Recomp
+# HWDER - Hyrule Warriors: Definitive Edition Recomp
 
 A static recompilation of *Hyrule Warriors: Definitive Edition* (Nintendo Switch) to a native
 Windows x64 executable. The game's ARM64 code is translated ahead of time to C and compiled with
@@ -42,7 +42,7 @@ with VS), Python 3.10+ with `cryptography` (only for the extraction helper).
 
 ```
 git clone --recursive https://github.com/sonsegajp/HWDER
-cd HWDE
+cd HWDER
 
 # 1. extract your dump once for the recompiler (exefs/ is all it needs; romfs/ is optional,
 #    the runtime can read it from the NSP directly)
@@ -59,7 +59,7 @@ set HWDER_EXEFS=data\exefs
 set HWDER_ROMFS=data\romfs
 build\release\hwder.exe
 
-# package: dist/HWDE-<date>.zip (exe, pdb, README, default settings)
+# package: dist/HWDER-<date>.zip (exe, pdb, README, default settings)
 python tools/make_dist.py
 ```
 
