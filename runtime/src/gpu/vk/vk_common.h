@@ -87,7 +87,9 @@ struct Buffer {
     u8* map = nullptr;
     u64 size = 0;
 };
-Buffer create_buffer(u64 size, VkBufferUsageFlags usage, bool host_visible, bool prefer_device_local = false);
+// cached: host-cached memory for buffers the CPU READS (readbacks). Uncached/write-combined host memory
+// reads at a few tens of MB/s, which made a 720p readback cost ~55 ms.
+Buffer create_buffer(u64 size, VkBufferUsageFlags usage, bool host_visible, bool prefer_device_local = false, bool cached = false);
 void destroy_buffer(Buffer& b);
 
 // A slice of CPU-writable memory valid for the commands being recorded.

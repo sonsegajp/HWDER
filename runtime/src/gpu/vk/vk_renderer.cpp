@@ -42,7 +42,7 @@ u32 find_memory_type(u32 bits, VkMemoryPropertyFlags want, VkMemoryPropertyFlags
     return 0;
 }
 
-Buffer create_buffer(u64 size, VkBufferUsageFlags usage, bool host_visible, bool prefer_device_local) {
+Buffer create_buffer(u64 size, VkBufferUsageFlags usage, bool host_visible, bool prefer_device_local, bool cached) {
     Buffer b;
     b.size = size;
     VkBufferCreateInfo ci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
@@ -56,7 +56,13 @@ Buffer create_buffer(u64 size, VkBufferUsageFlags usage, bool host_visible, bool
     VkMemoryPropertyFlags want = host_visible ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
                                               : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     VkResult r = VK_ERROR_OUT_OF_DEVICE_MEMORY;
-    if (host_visible && prefer_device_local) {
+    if (host_visible && cached) {
+        VkMemoryPropertyFlags want_c = want | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+        ai.memoryTypeIndex = find_memory_type(req.memoryTypeBits, want_c, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if ((display::device().mem.memoryTypes[ai.memoryTypeIndex].propertyFlags & want_c) == want_c)
+            r = vkAllocateMemory(dev(), &ai, nullptr, &b.mem);
+    }
+    if (r != VK_SUCCESS && host_visible && prefer_device_local) {
         ai.memoryTypeIndex = find_memory_type(req.memoryTypeBits, want | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         if (display::device().mem.memoryTypes[ai.memoryTypeIndex].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
             r = vkAllocateMemory(dev(), &ai, nullptr, &b.mem);
@@ -3237,7 +3243,7 @@ static void dump_frame(VkImage image, u32 w, u32 h, VkFormat fmt) {
 static void write_image_bmp(VkImage image, u32 w, u32 h, VkFormat fmt, const char* path, VkImageAspectFlags aspect) {
     u32 bpp = aspect == VK_IMAGE_ASPECT_DEPTH_BIT ? 4 : vk_format_bytes(fmt);  // depth reads back as 32-bit words
     if (vk_format_compressed(fmt) || !bpp) return;
-    Buffer rb = create_buffer((u64)w * h * bpp, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
+    Buffer rb = create_buffer((u64)w * h * bpp, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, false, true);
     VkBufferImageCopy c{};
     c.imageSubresource = {aspect, 0, 0, 1};
     c.imageExtent = {w, h, 1};
@@ -3330,7 +3336,7 @@ static void filmstrip_capture(VkImage src, u32 w, u32 h, const char* dir) {
         b.newLayout = VK_IMAGE_LAYOUT_GENERAL;
         b.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
-        for (auto& bf : bufs) bf = create_buffer(SW * SH * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
+        for (auto& bf : bufs) bf = create_buffer(SW * SH * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, false, true);
         CreateDirectoryA(dir, nullptr);
         char path[512];
         snprintf(path, sizeof(path), "%s/index.txt", dir);
@@ -3375,8 +3381,12 @@ static void filmstrip_capture(VkImage src, u32 w, u32 h, const char* dir) {
 void VkRenderer::present(const FramebufferInfo& fb) {
     VkImage image = VK_NULL_HANDLE;
     u32 w = fb.width, h = fb.height;
+    LARGE_INTEGER pt0, pt1, pt2, ptf;
+    QueryPerformanceFrequency(&ptf);
+    QueryPerformanceCounter(&pt0);
     {
         std::lock_guard<std::recursive_mutex> l(m_);
+        QueryPerformanceCounter(&pt1);
         process_invalidations();
         // Several images can share the presented address (a 3D render target, a VIC/CPU-written movie
         // frame, a differently sized alias). Take the most recently written one, and if the CPU wrote
@@ -3400,6 +3410,11 @@ void VkRenderer::present(const FramebufferInfo& fb) {
         }
         w = (u32)(w * img->scale + 0.5f);
         h = (u32)(h * img->scale_y + 0.5f);
+        QueryPerformanceCounter(&pt2);
+        if ((pt2.QuadPart - pt0.QuadPart) * 1000.0 / ptf.QuadPart > 20.0)
+            hw_log("vk: slow: present prologue %.0f ms (renderer lock %.0f, image lookup/validate %.0f) %s%s", (pt2.QuadPart - pt0.QuadPart) * 1000.0 / ptf.QuadPart,
+                   (pt1.QuadPart - pt0.QuadPart) * 1000.0 / ptf.QuadPart, (pt2.QuadPart - pt1.QuadPart) * 1000.0 / ptf.QuadPart,
+                   img->gpu_modified ? "gpu" : "cpu", img->cpu_dirty ? " dirty" : "");
         {   // HWDER_PRESENT_TRACE=1: one line per present (address switches, stale re-presents, movie cadence)
             static const bool ptrace = getenv("HWDER_PRESENT_TRACE") != nullptr;
             if (ptrace) {

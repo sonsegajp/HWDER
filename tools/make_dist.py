@@ -74,7 +74,6 @@ borderless=1
 res_scale=1.000
 unlocked_res=0
 show_fps=0
-display_60hz=0
 interp_hz=0
 """
 

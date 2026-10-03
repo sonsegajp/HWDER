@@ -427,6 +427,24 @@ public:
             if (b.size < size) size = b.size;
             if ((s64)off < 0) return void(rs.result = ResultInvalidOffset);
             if (!b.addr || !size) return;
+            // Slow-read diagnostics: a single RomFS read over 20 ms stalls the game thread that issued it
+            // (movie start, scene loads); logs the size so the decrypt/IO throughput can be judged.
+            LARGE_INTEGER rt0, rt1, rf;
+            QueryPerformanceFrequency(&rf);
+            QueryPerformanceCounter(&rt0);
+            struct ReadTimer {
+                LARGE_INTEGER *t0, *f;
+                u64 off, size;
+                ~ReadTimer() {
+                    LARGE_INTEGER t1;
+                    QueryPerformanceCounter(&t1);
+                    double ms = (t1.QuadPart - t0->QuadPart) * 1000.0 / f->QuadPart;
+                    if (ms > 20.0)
+                        hw_log("fs: slow: romfs read of %llu KiB at 0x%llx took %.0f ms (%.0f MB/s)", (unsigned long long)(size >> 10),
+                               (unsigned long long)off, ms, size / 1048576.0 / (ms / 1000.0));
+                }
+            } read_timer{&rt0, &rf, off, size};
+            (void)rt1;
             if (nsp::active()) {  // served straight out of the NSP's program NCA
                 if (!nsp::romfs_read(off, (u8*)b.addr, size)) {
                     static std::atomic<int> warned{0};

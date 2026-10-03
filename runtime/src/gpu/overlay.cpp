@@ -18,6 +18,9 @@
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 extern PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr;
 
+float hwder_render_scale_x();  // texture_cache.cpp: active internal resolution scale
+float hwder_render_scale_y();
+
 namespace overlay {
 
 // Recursive: ImGui's Win32 handler calls ReleaseCapture()/SetCursor(), which re-enter wnd_proc synchronously.
@@ -253,8 +256,13 @@ static void build_ui(VkExtent2D extent) {
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Scene render targets are allocated at this scale (UI and small post-process targets stay native).\n"
-                              "Unlocked = scale chosen from the window height at launch. Aspect ratio stays 16:9 for now.\n"
-                              "Applies immediately.");
+                              "Unlocked = the window's own size and aspect (ultrawide fills the screen); it overrides the scale above.\n"
+                              "On a 1920x1080 window that equals 1.00x, i.e. the game's native resolution. Applies immediately.");
+        {
+            float sx = ::hwder_render_scale_x(), sy = ::hwder_render_scale_y();
+            ImGui::TextDisabled("Rendering 3D at %dx%d (%.2fx x %.2fx)%s", (int)(1920 * sx + 0.5f), (int)(1080 * sy + 0.5f), sx, sy,
+                                v.unlocked_res ? "  [unlocked: follows the window]" : "");
+        }
     }
 
     ImGui::SeparatorText("Cheats (save file)");

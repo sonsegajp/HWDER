@@ -797,10 +797,10 @@ void TextureCache::upload(Image* img) {
                 out_size = (u64)p.w * p.h * p.d * 4;
                 // Decoded textures are cached on disk by content hash: the CPU decode is paid once per machine.
                 static bool cache_ok = CreateDirectoryA("cache", nullptr) || GetLastError() == ERROR_ALREADY_EXISTS;
-                static bool cache_dir = cache_ok && (CreateDirectoryA("cache\astc", nullptr) || GetLastError() == ERROR_ALREADY_EXISTS);
+                static bool cache_dir = cache_ok && (CreateDirectoryA("cache\\astc", nullptr) || GetLastError() == ERROR_ALREADY_EXISTS);
                 char path[128];
                 u64 h = hash_bytes(lin, lin_size, ((u64)p.w << 40) ^ ((u64)p.h << 20) ^ p.d ^ ((u64)info.fmt.bw << 56) ^ ((u64)info.fmt.bh << 60));
-                snprintf(path, sizeof(path), "cache\astc\%016llx.rgba", (unsigned long long)h);
+                snprintf(path, sizeof(path), "cache\\astc\\%016llx.rgba", (unsigned long long)h);
                 bool loaded = false;
                 if (cache_dir) {
                     if (FILE* f = fopen(path, "rb")) {
@@ -843,9 +843,26 @@ void TextureCache::upload(Image* img) {
 }
 
 void TextureCache::download(Image* img) {
-    SlowTimer timer("texture download", 30.0);
     n_downloads++;
     const ImageInfo& info = img->info;
+    LARGE_INTEGER dl_t0, dl_t1, dl_t2, dl_f;
+    QueryPerformanceFrequency(&dl_f);
+    QueryPerformanceCounter(&dl_t0);
+    dl_t1 = dl_t2 = dl_t0;
+    struct Report {
+        Image* img;
+        LARGE_INTEGER *t0, *t1, *t2, *f;
+        ~Report() {
+            LARGE_INTEGER t3;
+            QueryPerformanceCounter(&t3);
+            double total = (t3.QuadPart - t0->QuadPart) * 1000.0 / f->QuadPart;
+            if (total > 30.0)
+                hw_log("vk: slow: texture download took %.0f ms (record %.0f, gpu wait %.0f, copy-back %.0f) %ux%u fmt %u %s at %llx",
+                       total, (t1->QuadPart - t0->QuadPart) * 1000.0 / f->QuadPart, (t2->QuadPart - t1->QuadPart) * 1000.0 / f->QuadPart,
+                       (t3.QuadPart - t2->QuadPart) * 1000.0 / f->QuadPart, img->info.width, img->info.height, (unsigned)img->info.fmt.vk,
+                       img->info.render_target ? "RT" : "tex", (unsigned long long)img->addr);
+        }
+    } dl_report{img, &dl_t0, &dl_t1, &dl_t2, &dl_f};
     if (info.fmt.depth || info.fmt.stencil || info.fmt.astc || info.fmt.compressed) {
         img->gpu_modified = false;
         return;
@@ -855,7 +872,7 @@ void TextureCache::download(Image* img) {
         LevelParams p = level_params(info, l);
         total += (u64)p.width_bytes * p.by * p.d * info.layers;
     }
-    Buffer rb = create_buffer(total, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true);
+    Buffer rb = create_buffer(total, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, false, /*cached=*/true);
     std::vector<VkBufferImageCopy> regions;
     u64 off = 0;
     for (u32 layer = 0; layer < info.layers; layer++)
@@ -881,7 +898,9 @@ void TextureCache::download(Image* img) {
     vkCmdCopyImageToBuffer(rec().cmd(), src_image, VK_IMAGE_LAYOUT_GENERAL, rb.buf, (u32)regions.size(),
                            regions.data());
     rec().barrier();
+    QueryPerformanceCounter(&dl_t1);
     rec().wait_idle();
+    QueryPerformanceCounter(&dl_t2);
     if (scratch.image) free_scratch(scratch);
     VkMappedMemoryRange mr{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
     mr.memory = rb.mem;
@@ -927,8 +946,14 @@ void TextureCache::flush(u64 addr, u64 size) {
     SlowTimer timer("texture flush", 30.0);
     std::vector<Image*> v;
     collect_overlaps(addr, size, v);
-    for (Image* img : v)
-        if (img->gpu_modified) download(img);
+    for (Image* img : v) {
+        if (!img->gpu_modified) continue;
+        if (img->cpu_dirty) {  // CPU wrote after the GPU: guest memory is already the newest copy
+            img->gpu_modified = false;
+            continue;
+        }
+        download(img);
+    }
 }
 
 bool TextureCache::is_gpu_modified(u64 addr, u64 size) {
@@ -1086,3 +1111,7 @@ bool TextureCache::info_from_tic(const u32* tic, ImageInfo& info, u64& addr, u32
 void TextureCache::collect_garbage() {}
 
 }  // namespace gpu::vk
+
+// Overlay readout (global: overlay.cpp has no Vulkan headers).
+float hwder_render_scale_x() { return gpu::vk::g_res_scale; }
+float hwder_render_scale_y() { return gpu::vk::g_res_scale_y; }

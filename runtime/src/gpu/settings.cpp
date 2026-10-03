@@ -15,6 +15,15 @@ static const char* kFile = "hwder_settings.ini";
 Video& video() { return g_video; }
 
 void load() {
+    // Default for the 60 Hz monitor switch: on when the desktop refresh is not a multiple of 60. The game
+    // runs at 60 fps and its movies at 30; on a 144 Hz panel FIFO presentation shows frames for 2/3 or
+    // 5/5/5/4 refreshes, which reads as stutter. An explicit value in the ini always wins.
+    {
+        DEVMODEW dm{};
+        dm.dmSize = sizeof(dm);
+        if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency > 1)
+            g_video.display_60hz = (dm.dmDisplayFrequency % 60) != 0;
+    }
     FILE* f = fopen(kFile, "r");
     if (!f) return;
     char line[256];

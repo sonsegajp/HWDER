@@ -117,11 +117,21 @@ static void window_thread() {
     RegisterClassExW(&wc);
     RECT r = {0, 0, 1280, 720};
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
-    g_hwnd = CreateWindowExW(0, L"HWDER", L"Hyrule Warriors: Definitive Edition (HWDER)", WS_OVERLAPPEDWINDOW,
-                             CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, nullptr, nullptr,
-                             wc.hInstance, nullptr);
+    // HWDER_OFFSCREEN=1: a normal visible window (real swapchain, real presents) parked beyond the
+    // desktop edge and never activated, so automated runs exercise the present path without
+    // appearing on the user's screen or taking their focus.
+    const bool offscreen = getenv("HWDER_OFFSCREEN") != nullptr;
+    int x = CW_USEDEFAULT, y = CW_USEDEFAULT;
+    if (offscreen) {
+        RECT vd{GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN), 0, 0};
+        x = vd.left + GetSystemMetrics(SM_CXVIRTUALSCREEN) + 64;  // right of every monitor
+        y = vd.top + 64;
+    }
+    g_hwnd = CreateWindowExW(offscreen ? WS_EX_NOACTIVATE : 0, L"HWDER", L"Hyrule Warriors: Definitive Edition (HWDER)",
+                             WS_OVERLAPPEDWINDOW, x, y, r.right - r.left, r.bottom - r.top, nullptr, nullptr, wc.hInstance,
+                             nullptr);
     // Automated test runs (they set HWDER_LOG) open minimized without stealing focus.
-    ShowWindow(g_hwnd, getenv("HWDER_LOG") && !getenv("HWDER_SHOW") ? SW_SHOWMINNOACTIVE : SW_SHOW);
+    ShowWindow(g_hwnd, offscreen ? SW_SHOWNOACTIVATE : getenv("HWDER_LOG") && !getenv("HWDER_SHOW") ? SW_SHOWMINNOACTIVE : SW_SHOW);
     g_window_ready = true;
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) {
@@ -423,6 +433,8 @@ static void present(VkImage src, u32 w, u32 h, const VkClearColorValue& bg, VkSe
     QueryPerformanceCounter(&tc);
     g_trace_fence_ms = (tb.QuadPart - ta.QuadPart) * 1000.0 / tf.QuadPart;
     g_trace_acq_ms = (tc.QuadPart - tb.QuadPart) * 1000.0 / tf.QuadPart;
+    if (g_trace_fence_ms > 20 || g_trace_acq_ms > 20)
+        hw_log("display: slow: swapchain fence wait %.0f ms, acquire %.0f ms (result %d)", g_trace_fence_ms, g_trace_acq_ms, (int)r);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) {
         g_resize = true;
         return;
@@ -465,7 +477,10 @@ static void present(VkImage src, u32 w, u32 h, const VkClearColorValue& bg, VkSe
     b.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     vkCmdPipelineBarrier(fs.cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr,
                          0, nullptr, 1, &b);
+    LARGE_INTEGER pq0, pq1, pq2, pq3;
+    QueryPerformanceCounter(&pq0);
     overlay::render(fs.cb, dst, g_extent);
+    QueryPerformanceCounter(&pq1);
     b.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     b.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -499,7 +514,13 @@ static void present(VkImage src, u32 w, u32 h, const VkClearColorValue& bg, VkSe
     if (shared) q.lock();
     else q2.lock();
     VKCHECK(vkQueueSubmit(g_dev.present_queue, 1, &si, fs.fence));
+    QueryPerformanceCounter(&pq2);
     r = vkQueuePresentKHR(g_dev.present_queue, &pi);
+    QueryPerformanceCounter(&pq3);
+    if ((pq3.QuadPart - pq0.QuadPart) * 1000.0 / tf.QuadPart > 20.0)
+        hw_log("display: slow: present body %.0f ms (overlay %.0f, record+submit %.0f, queue-present %.0f)",
+               (pq3.QuadPart - pq0.QuadPart) * 1000.0 / tf.QuadPart, (pq1.QuadPart - pq0.QuadPart) * 1000.0 / tf.QuadPart,
+               (pq2.QuadPart - pq1.QuadPart) * 1000.0 / tf.QuadPart, (pq3.QuadPart - pq2.QuadPart) * 1000.0 / tf.QuadPart);
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) g_resize = true;
 }
 

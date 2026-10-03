@@ -1,4 +1,6 @@
 // HIPC/CMIF message handling. Layout reference: switchbrew "IPC_Marshalling".
+#include <windows.h>
+
 #include "ipc.h"
 
 #include <cstring>
@@ -281,7 +283,16 @@ Result send_sync_request(Handle h, u8* msg) {
     }
     bool dump = dump_filter && target->name().find(dump_filter) != std::string::npos;
     if (dump) dump_msg("req ", msg);
-    target->dispatch(rq, rs);
+    {
+        // A service call that takes long blocks the guest thread that issued it: report it.
+        LARGE_INTEGER d0, d1, df;
+        QueryPerformanceCounter(&d0);
+        target->dispatch(rq, rs);
+        QueryPerformanceCounter(&d1);
+        QueryPerformanceFrequency(&df);
+        double ms = (d1.QuadPart - d0.QuadPart) * 1000.0 / df.QuadPart;
+        if (ms > 10.0) hw_log("ipc: slow: %s command %u took %.0f ms", target->name().c_str(), rq.command, ms);
+    }
     static const bool trace = getenv("HWDER_IPC_TRACE") != nullptr;
     if (trace) {
         char hex[3 * 16 + 1] = {};

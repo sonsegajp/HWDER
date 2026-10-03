@@ -852,7 +852,13 @@ private:
         b.in2_size = in2.size;
         b.out2 = out2.size ? out2_buf.data() : nullptr;
         b.out2_size = out2.size;
+        LARGE_INTEGER io0, io1, iof;
+        QueryPerformanceCounter(&io0);
         NvResult r = dev->ioctl(fd, cmd, b);
+        QueryPerformanceCounter(&io1);
+        QueryPerformanceFrequency(&iof);
+        if ((io1.QuadPart - io0.QuadPart) * 1000.0 / iof.QuadPart > 10.0)
+            hw_log("nvdrv: slow: fd %u ioctl 0x%08x took %.0f ms", fd, cmd, (io1.QuadPart - io0.QuadPart) * 1000.0 / iof.QuadPart);
         if (out.addr && (cmd >> 31 & 1)) memcpy((void*)out.addr, work.data(), out.size);
         else if (out.addr) memcpy((void*)out.addr, work.data(), out.size);
         if (out2.addr) memcpy((void*)out2.addr, out2_buf.data(), out2.size);
